@@ -8,6 +8,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
 
 const DELAY_MS = 15 * 60 * 1000; // 15 minutes
+const CHECKIN_INTERVAL = 2 * 24 * 60 * 60 * 1000; // 2 days
 
 const PROGRAM_CONTEXT = `
 AMIRIS is a 12-week science-backed performance protocol for executives and high performers.
@@ -19,9 +20,8 @@ Ahmed's role as Fitness Coach:
 - Builds each client's personalized training plan, nutrition framework, and supplement stack
 - Runs bi-weekly 30-minute 1-on-1 with each client to review and adjust
 - Available daily on Slack for fitness and diet questions
-- All supplement stacks approved by Dr. Abdullah before delivery
 - If a question is medical/bloodwork related: defer to Dr. Abdullah on the group call
-- If a question is about general program/accountability: defer to Hannah
+- If a question is about general program/scheduling: defer to Hannah
 `;
 
 const CLIENT_DATA = {
@@ -43,57 +43,57 @@ Training: Resistance training 3x/week (1-1.5 hrs, full body) + Running 2x/week +
   "mariam-al-hammadi-private": {
     name: "Mariam",
     fullName: "Mariam Al-Hammadi",
-    background: "UAE, born 1988, working, studying, and building her own brand. Going through a lot lately.",
-    goals: "Level up wellbeing — mind, body, life. Grow personally and professionally.",
+    background: "UAE, born 1988, working, studying, and building her own brand.",
+    goals: "Level up wellbeing — mind, body, life.",
     protocol: "Individual protocol being built based on bloodwork results."
   },
   "wafaa-khattab-private": {
     name: "Wafaa",
     fullName: "Wafaa Khattab",
-    background: "Lebanon, based in Dubai. Arabic language teacher for foreigners, educational content creator for mothers on social media.",
+    background: "Lebanon, based in Dubai. Arabic language teacher, educational content creator.",
     goals: "Improve quality of life, become 1% better every day.",
     protocol: "Individual protocol being built based on bloodwork results."
   },
   "nouf-almarri-private": {
     name: "Nouf",
     fullName: "Nouf Almarri",
-    background: "Qatar, founder of Banan Ventures — a venture studio supporting MENA makers and producers.",
+    background: "Qatar, founder of Banan Ventures.",
     goals: "Performance optimization, identity-rooted growth.",
     protocol: "Individual protocol being built based on bloodwork results."
   },
   "majed-private": {
     name: "Majed",
     fullName: "Majed Baswied",
-    background: "Saudi Arabia, management and operations, managing family properties and businesses.",
-    goals: "Develop mentally, emotionally, physically. More discipline, consistency, energy, clarity.",
+    background: "Saudi Arabia, management and operations.",
+    goals: "More discipline, consistency, energy, clarity.",
     protocol: "Individual protocol being built based on bloodwork results."
   },
   "ghadah-abdulrahman-private": {
     name: "Ghadah",
     fullName: "Ghadah Abdulrahman",
-    background: "Saudi Arabia, works in investment attraction in the technology industry. National team athlete in weightlifting.",
-    goals: "Become a better version of herself, enjoy the journey.",
+    background: "Saudi Arabia, investment attraction, national team weightlifter.",
+    goals: "Become a better version of herself.",
     protocol: "Individual protocol being built based on bloodwork results."
   },
   "abdallah-abdulbasit-alqassimi-private": {
     name: "Abdallah",
     fullName: "Abdallah Abdulbasit AlQassimi",
-    background: "26 years old, manager in commercial department, side hustles in Dubai number plates and real estate. Passionate about health, fitness and wellness.",
+    background: "26 years old, commercial manager, passionate about health and fitness.",
     goals: "Health, fitness, wellness optimization.",
     protocol: "Individual protocol being built based on bloodwork results."
   },
   "waseem-alammar-ptivate": {
     name: "Waseem",
     fullName: "Waseem Alammar",
-    background: "Saudi Arabia, finance and investment sector.",
+    background: "Saudi Arabia, finance and investment.",
     goals: "Develop physically, mentally, and emotionally.",
     protocol: "Individual protocol being built based on bloodwork results."
   },
   "reem-aldosari-private": {
     name: "Reem",
     fullName: "Reem Aldosari",
-    background: "Qatar, business and management background with focus on marketing. Building her own company. Active person who enjoys sports and values wellness.",
-    goals: "Better understand her body, build stronger foundation for wellbeing, create a sustainable lifestyle.",
+    background: "Qatar, marketing and business, building her own company.",
+    goals: "Build stronger foundation for wellbeing.",
     protocol: "Individual protocol being built based on bloodwork results."
   },
   "loulwa-alshalan-1-1": {
@@ -128,33 +128,64 @@ Training: Resistance training 3x/week (1-1.5 hrs, full body) + Running 2x/week +
 
 function buildSystemPrompt(channelName) {
   const client = CLIENT_DATA[channelName];
-
   const clientSection = client ? `
 YOU ARE SPEAKING WITH: ${client.fullName}
 Background: ${client.background}
 Goals: ${client.goals}
-Their Protocol:
-${client.protocol}
-` : `This is a general channel. Respond as Ahmed the fitness coach for the AMIRIS program.`;
+Their Protocol: ${client.protocol}
+` : `General AMIRIS channel.`;
 
   return `You are Ahmed, the fitness coach in the AMIRIS performance protocol program.
-
 ${PROGRAM_CONTEXT}
-
 ${clientSection}
-
 HOW TO RESPOND:
 - Write as Ahmed personally — warm, direct, like a coach who genuinely knows this client
-- Reference their specific protocol, goals, and background when relevant
-- Give practical, personalized advice based on their data
-- Be encouraging but real — use phrases like "Trust the process", "Let's dial this in", "Here's what I want you to do"
-- Keep it concise — coaches give clear direction, not essays
-- Never say you are AI or a bot
-- If asked about bloodwork/medical topics say: "That's one for Dr. Abdullah on the group call"
-- If asked about general program/scheduling say: "Hannah will cover that in your 1-on-1"
-- Sign off naturally like a coach would`;
+- Short and natural — like a real text message, not an essay
+- Reference their specific goals and protocol when relevant
+- Be encouraging: "Trust the process", "Let's dial this in"
+- Never mention you are AI or a bot
+- If medical/bloodwork question: "That's one for Dr. Abdullah on the group call"
+- If scheduling question: "Hannah will sort that in your 1-on-1"`;
 }
 
+// ─── CHECK-IN MESSAGES ─────────────────────────────────────────────────────────
+const checkInMessages = [
+  (name) => `Hey ${name}! How's everything going? Any questions or anything you want to adjust? 💪`,
+  (name) => `${name}, checking in — how's the energy been? Sleeping well? 🙌`,
+  (name) => `Hey ${name}! How did training go this week? Any wins to celebrate? 🔥`,
+  (name) => `${name}, quick check-in — how's the nutrition been? Hitting your numbers? Let me know if you need anything adjusted.`,
+  (name) => `Hey ${name}! How are you feeling overall? Any challenges coming up I should know about? 💯`,
+];
+
+let checkInIndex = 0;
+
+async function sendCheckIns() {
+  for (const [channelName, client] of Object.entries(CLIENT_DATA)) {
+    try {
+      // Find the channel ID by name
+      const result = await slack.conversations.list({ types: "private_channel", limit: 200 });
+      const channel = result.channels?.find(c => c.name === channelName);
+      if (!channel) continue;
+
+      const message = checkInMessages[checkInIndex % checkInMessages.length](client.name);
+      await slack.chat.postMessage({
+        channel: channel.id,
+        text: message,
+      });
+
+      // Small delay between messages
+      await new Promise(r => setTimeout(r, 2000));
+    } catch (err) {
+      console.error(`Check-in failed for ${channelName}:`, err.message);
+    }
+  }
+  checkInIndex++;
+}
+
+// Start check-in timer
+setInterval(sendCheckIns, CHECKIN_INTERVAL);
+
+// ─── SERVER ────────────────────────────────────────────────────────────────────
 function verifySlackRequest(req) {
   const signature = req.headers["x-slack-signature"];
   const timestamp = req.headers["x-slack-request-timestamp"];
@@ -199,7 +230,7 @@ app.post("/slack/events", async (req, res) => {
     try {
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
+        max_tokens: 500,
         system: systemPrompt,
         messages: [{ role: "user", content: userMessage }],
       });
