@@ -8,7 +8,12 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
 
 const DELAY_MS = 15 * 60 * 1000; // 15 minutes
-const CHECKIN_INTERVAL = 2 * 24 * 60 * 60 * 1000; // 2 days
+// Check-in schedule: twice a week (every 3-4 days alternating)
+const CHECKIN_INTERVALS = [
+  3 * 24 * 60 * 60 * 1000 + Math.floor(Math.random() * 4 * 60 * 60 * 1000), // ~3 days + random hours
+  4 * 24 * 60 * 60 * 1000 + Math.floor(Math.random() * 4 * 60 * 60 * 1000), // ~4 days + random hours
+];
+let checkinIntervalIndex = 0;
 
 const PROGRAM_CONTEXT = `
 AMIRIS is a 12-week science-backed performance protocol for executives and high performers.
@@ -149,7 +154,8 @@ HOW TO RESPOND:
 }
 
 // ─── CHECK-IN MESSAGES ─────────────────────────────────────────────────────────
-const checkInMessages = [
+// Simple check-ins (sent first of the week)
+const simpleCheckIns = [
   (name) => `Hello ${name}!\nhow things are going with you until now`,
   (name) => `Hey ${name}, how has your week been so far?`,
   (name) => `${name}, how are you feeling today?`,
@@ -165,50 +171,79 @@ const checkInMessages = [
   (name) => `${name}, how are you holding up?`,
   (name) => `Hey ${name}, good to check in. How are things?`,
   (name) => `${name}, how was your weekend?`,
-  (name) => `Hey ${name}, how is your body feeling this week?`,
-  (name) => `${name}, how has your routine been going?`,
-  (name) => `Hey ${name}, what has been the highlight of your week so far?`,
-  (name) => `${name}, how are you managing things on your end?`,
-  (name) => `Hey ${name}, how has your motivation been lately?`,
-  (name) => `${name}, how has recovery been going?`,
-  (name) => `Hey ${name}, how has your consistency been this week?`,
-  (name) => `${name}, how are you feeling going into this week?`,
-  (name) => `Hey ${name}, any wins this week you want to share?`,
-  (name) => `${name}, how has your focus been lately?`,
-  (name) => `Hey ${name}, how is everything on your side?`,
-  (name) => `${name}, how has your mindset been this week?`,
-  (name) => `Hey ${name}, how is your progress feeling to you?`,
-  (name) => `${name}, how has your discipline been this week?`,
-  (name) => `Hey ${name}, how are things coming along?`,
 ];
 
-let checkInIndex = 0;
+// Detailed check-ins (sent second of the week)
+const detailedCheckIns = [
+  (name) => `${name}, quick check-in for this week:\n\n1. What is your current weight?\n2. From 0 to 10, how would you rate your workout performance this week?\n3. How has your sleep been?`,
+  (name) => `Hey ${name}, let's do a quick weekly check-in:\n\n1. Current weight?\n2. Rate your training this week from 0 to 10\n3. How is your energy levels been overall?`,
+  (name) => `${name}, end of week check-in:\n\n1. What is your weight right now?\n2. Workout performance this week — 0 to 10?\n3. Anything feeling off or worth flagging?`,
+  (name) => `Hey ${name}, checking in properly this week:\n\n1. Current weight?\n2. How would you rate your training — 0 to 10?\n3. How has recovery been?`,
+  (name) => `${name}, weekly check-in time:\n\n1. Weight this week?\n2. Training performance — 0 to 10?\n3. How is your nutrition consistency been?`,
+  (name) => `Hey ${name}, let's track where you are this week:\n\n1. Current weight?\n2. Rate your workouts this week — 0 to 10?\n3. How are you feeling mentally?`,
+  (name) => `${name}, quick update needed:\n\n1. What is the scale saying this week?\n2. Training this week — 0 to 10?\n3. Any challenges you want to talk through?`,
+  (name) => `Hey ${name}, check-in time:\n\n1. Current weight?\n2. How did your workouts feel this week — 0 to 10?\n3. How has your sleep quality been?`,
+  (name) => `${name}, weekly progress check:\n\n1. Weight right now?\n2. Workout rating this week — 0 to 10?\n3. What is one thing you want to improve next week?`,
+  (name) => `Hey ${name}, let's see where we are:\n\n1. Current weight?\n2. Performance in training this week — 0 to 10?\n3. How is your motivation been?`,
+  (name) => `${name}, end of week review:\n\n1. What is your current weight?\n2. How would you rate your training — 0 to 10?\n3. How has your energy been throughout the day?`,
+  (name) => `Hey ${name}, checking in on your progress:\n\n1. Weight this week?\n2. Training performance — 0 to 10?\n3. How are you managing stress levels?`,
+  (name) => `${name}, weekly check-in:\n\n1. Current weight?\n2. Rate your workouts this week — 0 to 10?\n3. How has your digestion and gut been?`,
+  (name) => `Hey ${name}, let's track your week:\n\n1. What is the weight right now?\n2. Training this week — 0 to 10?\n3. How is your consistency been with supplements?`,
+  (name) => `${name}, progress check:\n\n1. Current weight?\n2. Workout performance — 0 to 10?\n3. How are you feeling overall going into next week?`,
+];
 
-async function sendCheckIns() {
+let simpleIndex = 0;
+let detailedIndex = 0;
+
+// Alternate between simple and detailed check-ins
+// Add random offset (0-3 hours) so messages don't always arrive at the same time
+async function sendCheckIns(type) {
+  const result = await slack.conversations.list({ types: "private_channel", limit: 200 });
+
   for (const [channelName, client] of Object.entries(CLIENT_DATA)) {
     try {
-      // Find the channel ID by name
-      const result = await slack.conversations.list({ types: "private_channel", limit: 200 });
       const channel = result.channels?.find(c => c.name === channelName);
       if (!channel) continue;
 
-      const message = checkInMessages[checkInIndex % checkInMessages.length](client.name);
+      // Random delay per client (0-30 mins) so messages stagger naturally
+      const randomDelay = Math.floor(Math.random() * 30 * 60 * 1000);
+      await new Promise(r => setTimeout(r, randomDelay));
+
+      let message;
+      if (type === "simple") {
+        message = simpleCheckIns[simpleIndex % simpleCheckIns.length](client.name);
+        simpleIndex++;
+      } else {
+        message = detailedCheckIns[detailedIndex % detailedCheckIns.length](client.name);
+        detailedIndex++;
+      }
+
       await slack.chat.postMessage({
         channel: channel.id,
         text: message,
       });
-
-      // Small delay between messages
-      await new Promise(r => setTimeout(r, 2000));
     } catch (err) {
       console.error(`Check-in failed for ${channelName}:`, err.message);
     }
   }
-  checkInIndex++;
 }
 
-// Start check-in timer
-setInterval(sendCheckIns, CHECKIN_INTERVAL);
+// Schedule twice a week with different intervals and alternating types
+function scheduleNextCheckIn(type) {
+  // Random time offset between 1-4 hours so it never feels automated
+  const randomHours = Math.floor(Math.random() * 3 + 1) * 60 * 60 * 1000;
+  const nextType = type === "simple" ? "detailed" : "simple";
+  const baseInterval = type === "simple" ? 3 * 24 * 60 * 60 * 1000 : 4 * 24 * 60 * 60 * 1000;
+  const interval = baseInterval + randomHours;
+
+  setTimeout(async () => {
+    await sendCheckIns(type);
+    scheduleNextCheckIn(nextType);
+  }, interval);
+}
+
+// Start with simple check-in
+scheduleNextCheckIn("simple");
 
 // ─── SERVER ────────────────────────────────────────────────────────────────────
 function verifySlackRequest(req) {
